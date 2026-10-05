@@ -1,0 +1,32 @@
+[
+  {
+    "id": "quote",
+    "name": "Quote API",
+    "goal": "Create a finance quote",
+    "overview": "The Quote API lets a dealer application request a finance quote for equipment before a customer commits to an agreement.",
+    "common_uses": ["Generating a monthly payment estimate", "Comparing lease vs loan terms"],
+    "requirements": ["Equipment price", "Term length", "Customer credit tier"],
+    "environments": ["sandbox", "production"],
+    "keywords": ["quote", "pricing", "estimate", "payment"]
+  },
+  {
+    "id": "finance-app",
+    "name": "Finance Application API",
+    "goal": "Submit a finance application",
+    "overview": "The Finance Application API submits a completed financing application for review and underwriting.",
+    "common_uses": ["Submitting a new lease application", "Submitting a new loan application"],
+    "requirements": ["Applicant information", "Equipment details", "Requested term"],
+    "environments": ["sandbox", "production"],
+    "keywords": ["application", "apply", "financing", "underwriting"]
+  },
+  {
+    "id": "contract",
+    "name": "Contract API",
+    "goal": "View contract information",
+    "overview": "The Contract API returns the current status and terms of an existing finance contract.",
+    "common_uses": ["Checking contract status", "Viewing payment schedule"],
+    "requirements": ["Contract number", "Authorized account access"],
+    "environments": ["sandbox", "production"],
+    "keywords": ["contract", "status", "schedule", "payments"]
+  }
+]

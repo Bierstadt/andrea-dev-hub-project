@@ -1,0 +1,32 @@
+{
+  "quote": [
+    {
+      "operation": "createQuote",
+      "method": "POST",
+      "path": "/v1/quotes",
+      "required_fields": ["equipment_price", "term_months", "credit_tier"],
+      "sample_request": {"equipment_price": 25000, "term_months": 36, "credit_tier": "A"},
+      "sample_response": {"quote_id": "Q-10293", "monthly_payment": 745.12, "status": "generated"}
+    }
+  ],
+  "finance-app": [
+    {
+      "operation": "submitApplication",
+      "method": "POST",
+      "path": "/v1/applications",
+      "required_fields": ["applicant_name", "equipment_description", "requested_term"],
+      "sample_request": {"applicant_name": "Jordan Smith", "equipment_description": "Combine Harvester", "requested_term": 48},
+      "sample_response": {"application_id": "APP-55210", "status": "received"}
+    }
+  ],
+  "contract": [
+    {
+      "operation": "getContractStatus",
+      "method": "GET",
+      "path": "/v1/contracts/{contract_number}",
+      "required_fields": ["contract_number"],
+      "sample_request": {"contract_number": "C-88213"},
+      "sample_response": {"contract_number": "C-88213", "status": "active", "next_payment_due": "2026-11-01"}
+    }
+  ]
+}
