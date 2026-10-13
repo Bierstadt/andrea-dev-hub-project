@@ -11,5 +11,13 @@ This project is a prototype developer hub that helps users learn about available
   - `requests.json` - saved credential requests (created/updated by the app)
 - `docs/` - project specification and sketch PDFs
 - `bugs.md` - running list of known bugs and how to reproduce them
-- `hello.py`, `hello_CH.py`, `WIP1.py` - earlier GitHub-workflow practice files
+- `hello.py`, `hello_CH.py` - earlier GitHub-workflow practice files
+
+## Credential request statuses
+
+1. **Submitted** - request saved after passing validation
+2. **Needs Information** - review found the API guide wasn't reviewed or there is no technical contact
+3. **Credentials Available** - review passed; a sample (fake) key is shown, masked
+
+Use *Request Credentials → View existing request* with your request ID to run the simulated review.
 
