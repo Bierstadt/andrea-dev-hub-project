@@ -48,6 +48,14 @@ def show_home_menu():
     return input("Select an option (1-3): ").strip()
 
 
+def find_product(product_id, catalog):
+    """Return the catalog product with this id, or None if it doesn't exist."""
+    for product in catalog:
+        if product["id"] == product_id:
+            return product
+    return None
+
+
 # AI-generated: builds one combined search string per product and
 # does a case-insensitive substring match against it.
 def search_catalog(catalog, search_text=""):
@@ -92,6 +100,35 @@ def show_api_spec(product_id, api_specs, operation_index=0):
     print("Sample response:", json.dumps(op["sample_response"], indent=2))
 
 
+def list_operations(product_id, api_specs):
+    """Print a numbered list of the operations available for an API product."""
+    operations = api_specs.get(product_id, [])
+    for i, op in enumerate(operations, start=1):
+        print(f"{i}) {op['operation']} ({op['method']} {op['path']})")
+    return operations
+
+
+# Parses a comma-separated list like "1,2" into
+# operation names, skipping anything that isn't a valid number.
+def choose_operations(product_id, api_specs, selection=None):
+    """
+    Let the user pick one or more operations by number (e.g. "1,2").
+    Pass `selection` to supply a hardcoded answer for testing.
+    Returns a list of operation names (empty if nothing valid was chosen).
+    """
+    operations = list_operations(product_id, api_specs)
+    if selection is None:
+        selection = input("Select operations (e.g. 1,2): ").strip()
+    chosen = []
+    for part in selection.split(","):
+        part = part.strip()
+        if part.isdigit() and 1 <= int(part) <= len(operations):
+            name = operations[int(part) - 1]["operation"]
+            if name not in chosen:
+                chosen.append(name)
+    return chosen
+
+
 # AI-generated: uses a nested helper function, ask(), that returns a
 # hardcoded answer if one was passed in, otherwise falls back to input().
 def collect_credential_request(product_id, answers=None):
@@ -126,6 +163,12 @@ def validate_request(request):
         "intended_use", "reviewed_guide", "technical_contact",
     ]
     missing = [field for field in required_fields if not request.get(field)]
+    if not request.get("operations"):
+        missing.append("operations (choose at least one)")
+    if request.get("environment", "").lower() not in ("sandbox", "production"):
+        missing.append("environment (must be sandbox/production)")
+    if "@" not in request.get("email", ""):
+        missing.append("email (must contain @)")
     if request.get("reviewed_guide", "").lower() not in ("yes", "no"):
         missing.append("reviewed_guide (must be yes/no)")
     if request.get("technical_contact", "").lower() not in ("yes", "no"):
@@ -139,26 +182,40 @@ def _generate_request_id():
     return f"REQ-{suffix}"
 
 
-# AI-generated: generates a random request ID and sample key,
-# simulates approval, and rewrites requests.json.
-# TODO: save as "Submitted" first and approve in a separate step.
-def save_request(request, requests_list):
-    """
-    Assign a request ID/status, simulate an approval step (per the class
-    prototype scope), append to requests_list, and persist to JSON.
-    """
-    request["request_id"] = _generate_request_id()
-
-    # Simulated review step - real projects would wait for a human/process here.
-    request["status"] = "Approved"
-    request["sample_credential"] = "sk_test_" + "".join(
-        random.choices(string.ascii_lowercase + string.digits, k=20)
-    )
-
-    requests_list.append(request)
+def write_requests(requests_list):
+    """Save the full list of requests to data/requests.json."""
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(REQUESTS_FILE, "w", encoding="utf-8") as f:
         json.dump(requests_list, f, indent=2)
+
+
+# AI-generated: generates a random request ID and saves the request
+# with status "Submitted" (no credential yet).
+def save_request(request, requests_list):
+    """Assign a request ID, mark it Submitted, append to requests_list, and persist."""
+    request["request_id"] = _generate_request_id()
+    request["status"] = "Submitted"
+    requests_list.append(request)
+    write_requests(requests_list)
+    return request
+
+
+# Simulated review step. Requests where the user hasn't
+# reviewed the guide or has no technical contact go to "Needs Information";
+# everything else gets a sample key and "Credentials Available".
+def review_request(request, requests_list):
+    """Simulate the review of a Submitted request and update its status."""
+    if request["status"] != "Submitted":
+        return request
+    if request["reviewed_guide"].lower() != "yes" or request["technical_contact"].lower() != "yes":
+        request["status"] = "Needs Information"
+        request["review_note"] = "Please review the API guide and provide a technical contact."
+    else:
+        request["status"] = "Credentials Available"
+        request["sample_credential"] = "sk_test_" + "".join(
+            random.choices(string.ascii_lowercase + string.digits, k=20)
+        )
+    write_requests(requests_list)
     return request
 
 
@@ -176,6 +233,9 @@ def show_credentials(request, reveal=False):
     """Display a credential request's status and a masked (or revealed) sample key."""
     print(f"\nRequest {request['request_id']} - Status: {request['status']}")
     print(f"API: {request['product_id']}  Environment: {request['environment']}")
+    print(f"Operations: {', '.join(request.get('operations', []))}")
+    if request.get("review_note"):
+        print(f"Reviewer note: {request['review_note']}")
     credential = request.get("sample_credential")
     if not credential:
         print("No credential available yet.")
@@ -205,32 +265,50 @@ def run_catalog_flow(catalog, api_specs):
     product = matches[int(choice) - 1]
     show_api_product(product)
 
-    if input("View API specification? (yes/no): ").strip().lower() == "yes":
-        show_api_spec(product["id"], api_specs)
+    if input("View API specification? (yes/no): ").strip().lower() != "yes":
+        return
+
+    print("\nOperations:")
+    operations = list_operations(product["id"], api_specs)
+    pick = input("Select an operation number: ").strip()
+    if pick.isdigit() and 1 <= int(pick) <= len(operations):
+        show_api_spec(product["id"], api_specs, int(pick) - 1)
+    else:
+        print("Invalid choice.")
 
 
 # AI-generated: branches between new/existing requests and chains
-# collect -> validate -> save -> show.
-# TODO: reject API ids that aren't in the catalog.
-def run_credential_flow(catalog, requests_list):
+# collect -> validate -> save -> show. Existing "Submitted" requests
+# can be sent through the simulated review step.
+def run_credential_flow(catalog, api_specs, requests_list):
     """Handle the Request Credentials menu: start a new request or check an existing one."""
     choice = input("1) New request  2) View existing request: ").strip()
 
     if choice == "2":
-        request_id = input("Enter your request ID: ").strip()
+        request_id = input("Enter your request ID: ").strip().upper()
         request = find_request(request_id, requests_list)
-        if request:
-            show_credentials(request)
-        else:
+        if not request:
             print("Request not found.")
+            return
+        show_credentials(request)
+        if request["status"] == "Submitted":
+            if input("Simulate review now? (yes/no): ").strip().lower() == "yes":
+                review_request(request, requests_list)
+                show_credentials(request)
         return
 
     print("\nAvailable APIs:")
     for product in catalog:
         print(f"- {product['id']}: {product['name']}")
-    product_id = input("Enter the API id to request credentials for: ").strip()
+    product_id = input("Enter the API id to request credentials for: ").strip().lower()
+    if not find_product(product_id, catalog):
+        print(f"'{product_id}' is not an API in the catalog.")
+        return
 
+    print("\nOperations:")
+    operations = choose_operations(product_id, api_specs)
     request = collect_credential_request(product_id)
+    request["operations"] = operations
     missing = validate_request(request)
     if missing:
         print("\nMissing or invalid information:")
@@ -240,6 +318,7 @@ def run_credential_flow(catalog, requests_list):
 
     saved = save_request(request, requests_list)
     print(f"\nRequest submitted! Your request ID is {saved['request_id']}.")
+    print("Use 'View existing request' with this ID to check its status.")
     show_credentials(saved)
 
 
@@ -252,7 +331,7 @@ def main():
         if choice == "1":
             run_catalog_flow(catalog, api_specs)
         elif choice == "2":
-            run_credential_flow(catalog, requests_list)
+            run_credential_flow(catalog, api_specs, requests_list)
         elif choice == "3":
             print("Goodbye!")
             break
