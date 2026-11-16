@@ -170,8 +170,25 @@ def run_catalog_flow(catalog, api_specs):
         show_api_spec(operations[pick])
 
 
+def run_resubmit_flow(request, requests_list):
+    """Let the requester answer a Needs Information note and resubmit."""
+    print("\nUpdate your answers (press Enter to keep the current one).")
+    intended_use = input(f"Intended use [{request['intended_use']}]: ").strip() or request["intended_use"]
+    updates = {
+        "intended_use": intended_use,
+        "reviewed_guide": ask_yes_no("Have you reviewed the API guide? (yes/no): "),
+        "technical_contact": ask_yes_no("Is a technical contact available? (yes/no): "),
+    }
+    response = input("Message to the reviewer (optional): ")
+    try:
+        logic.resubmit_request(request, requests_list, updates, response)
+        print("Request resubmitted for review.")
+    except ValueError as err:
+        print(err)
+
+
 def run_status_lookup(requests_list):
-    """Ask for a request ID and show that request's status."""
+    """Ask for a request ID, show its status, and offer to reveal the key or resubmit."""
     request = logic.find_request(input("Enter your request ID: "), requests_list)
     if not request:
         print("Request not found. Check the ID (it looks like REQ-AB12CD).")
@@ -179,6 +196,9 @@ def run_status_lookup(requests_list):
     show_credentials(request)
     if request.get("sample_credential") and ask_yes_no("Reveal full key? (yes/no): ") == "yes":
         show_credentials(request, reveal=True)
+    if request["status"] == logic.STATUS_NEEDS_INFO and \
+            ask_yes_no("Update and resubmit this request? (yes/no): ") == "yes":
+        run_resubmit_flow(request, requests_list)
 
 
 # AI-generated: branches between new/existing requests and chains
@@ -235,6 +255,10 @@ def run_admin_flow(requests_list):
     if index is None:
         return
     request = waiting[index]
+    if request.get("previous_review_note"):
+        print(f"You previously asked: {request['previous_review_note']}")
+    if request.get("requester_response"):
+        print(f"Requester's response: {request['requester_response']}")
     print(f"Intended use: {request['intended_use']}")
     print(f"Reviewed guide: {request['reviewed_guide']}  Technical contact: {request['technical_contact']}")
 
