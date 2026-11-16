@@ -34,3 +34,5 @@ python -m unittest test_hub_logic   # unit tests
 
 The review is done on the **Admin Review** page (or menu option 3 in `main.py`). The suggested note only mentions the readiness answers that were "no". Requesters check their status with their request ID.
 
+If a request is Needs Information, the requester can update their intended use and readiness answers on the Check Request Status page (or after looking up the request in `main.py`), add an optional message, and resubmit it. It goes back to Submitted, and the admin sees the earlier note and the requester's response. A resubmission must change at least one answer or include a message.
+
