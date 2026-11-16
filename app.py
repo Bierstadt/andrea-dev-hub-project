@@ -37,7 +37,21 @@ def show_data_error(err):
     st.stop()
 
 
-def show_request_summary(request, reveal=False):
+def show_status_progress(status):
+    """Show a simple 3-step tracker: Submitted -> Admin review -> Credentials."""
+    if status == logic.STATUS_AVAILABLE:
+        icons = ["✅", "✅", "✅"]
+    elif status == logic.STATUS_NEEDS_INFO:
+        icons = ["✅", "⚠️", "⬜"]
+    else:
+        icons = ["✅", "⏳", "⬜"]
+    review_label = "Admin review (action needed)" if status == logic.STATUS_NEEDS_INFO else "Admin review"
+    steps = ["Submitted", review_label, "Credentials available"]
+    for col, icon, step in zip(st.columns(len(steps)), icons, steps):
+        col.markdown(f"{icon} {step}")
+
+
+def show_request_summary(request, catalog, reveal=False):
     """Show a request's status, details, reviewer note, and (masked) key."""
     status = request["status"]
     if status == logic.STATUS_AVAILABLE:
@@ -46,7 +60,9 @@ def show_request_summary(request, reveal=False):
         st.warning(f"Status: {status}")
     else:
         st.info(f"Status: {status} (waiting for admin review)")
-    st.write(f"**API:** {request['product_id']}  |  **Environment:** {request['environment']}")
+    show_status_progress(status)
+    st.write(f"**API:** {logic.get_product_name(request['product_id'], catalog)}  |  "
+             f"**Environment:** {request['environment']}")
     st.write(f"**Operations:** {', '.join(request.get('operations', []))}")
     if request.get("review_note"):
         st.write(f"**Reviewer note:** {request['review_note']}")
@@ -169,26 +185,79 @@ def show_request_page():
         return
     st.success(f"Request submitted! Your request ID is **{saved['request_id']}**. "
                "Save it to check your status later.")
+    st.code(saved["request_id"], language=None)
+    st.session_state["last_request_id"] = saved["request_id"]
     st.page_link(STATUS_PAGE, label="Check request status", icon="➡️")
 
 
+def show_resubmit_form(request, requests_list):
+    """Let the requester answer a Needs Information note and resubmit."""
+    st.subheader("Update and resubmit")
+    st.write("Answer the reviewer's note below, then resubmit for another review.")
+    rid = request["request_id"]
+    with st.form(f"resubmit_{rid}"):
+        intended_use = st.text_area("Briefly describe intended use", value=request["intended_use"])
+        reviewed_guide = st.radio(
+            "Have you reviewed the API guide?", logic.YES_NO, horizontal=True,
+            index=logic.YES_NO.index(request["reviewed_guide"]),
+        )
+        technical_contact = st.radio(
+            "Is a technical contact available?", logic.YES_NO, horizontal=True,
+            index=logic.YES_NO.index(request["technical_contact"]),
+        )
+        response = st.text_area("Message to the reviewer (optional)")
+        resubmitted = st.form_submit_button("Resubmit request", type="primary")
+
+    if not resubmitted:
+        return
+    try:
+        logic.resubmit_request(request, requests_list, {
+            "intended_use": intended_use, "reviewed_guide": reviewed_guide,
+            "technical_contact": technical_contact,
+        }, response)
+    except ValueError as err:
+        st.error(str(err))
+        return
+    except logic.DataFileError as err:
+        st.error(f"Your request could not be saved: {err}")
+        return
+    st.session_state["status_message"] = f"{rid} was resubmitted for review."
+    st.rerun()
+
+
 def show_status_page():
-    """Check Request Status page: look up a request by ID and reveal the key."""
+    """Check Request Status page: look up a request, reveal the key, or resubmit."""
     st.title("Check Request Status")
-    request_id = st.text_input("Request ID", placeholder="REQ-AB12CD")
+    try:
+        catalog, _ = load_catalog_and_specs()
+    except logic.DataFileError as err:
+        show_data_error(err)
+
+    message = st.session_state.pop("status_message", None)
+    if message:
+        st.success(message)
+
+    # Pre-fill the ID box with the request the user just submitted or looked up.
+    if "status_request_id" not in st.session_state:
+        st.session_state["status_request_id"] = st.session_state.get("last_request_id", "")
+    request_id = st.text_input("Request ID", placeholder="REQ-AB12CD", key="status_request_id")
     if not request_id:
         return
     try:
-        request = logic.find_request(request_id, load_requests())
+        requests_list = load_requests()
     except logic.DataFileError as err:
         show_data_error(err)
+    request = logic.find_request(request_id, requests_list)
     if not request:
         st.error("Request not found. Check the ID (it looks like REQ-AB12CD).")
         return
+    st.session_state["last_request_id"] = request["request_id"]
     reveal = False
     if request.get("sample_credential"):
         reveal = st.toggle("Reveal full key")
-    show_request_summary(request, reveal)
+    show_request_summary(request, catalog, reveal)
+    if request["status"] == logic.STATUS_NEEDS_INFO:
+        show_resubmit_form(request, requests_list)
 
 
 def show_admin_page():
@@ -196,6 +265,7 @@ def show_admin_page():
     st.title("Admin Review")
     st.caption("Simulated reviewer view - in a real hub this page would require an admin login.")
     try:
+        catalog, _ = load_catalog_and_specs()
         requests_list = load_requests()
     except logic.DataFileError as err:
         show_data_error(err)
@@ -205,13 +275,25 @@ def show_admin_page():
         st.success(message)
 
     waiting = logic.list_requests_by_status(requests_list, logic.STATUS_SUBMITTED)
+    count_cols = st.columns(3)
+    for col, status in zip(count_cols, (logic.STATUS_SUBMITTED, logic.STATUS_NEEDS_INFO,
+                                        logic.STATUS_AVAILABLE)):
+        col.metric(status, len(logic.list_requests_by_status(requests_list, status)))
+
     st.subheader(f"Waiting for review ({len(waiting)})")
     if not waiting:
         st.info("No requests are waiting for review.")
     for request in waiting:
         rid = request["request_id"]
-        with st.expander(f"{rid} - {request['name']} ({request['organization']}) - "
-                         f"{request['product_id']} / {request['environment']}"):
+        product_name = logic.get_product_name(request["product_id"], catalog)
+        label = f"{rid} - {request['name']} ({request['organization']}) - {product_name} / {request['environment']}"
+        if request.get("resubmission_count"):
+            label += " - resubmitted"
+        with st.expander(label):
+            if request.get("previous_review_note"):
+                st.info(f"**You previously asked:** {request['previous_review_note']}")
+            if request.get("requester_response"):
+                st.write(f"**Requester's response:** {request['requester_response']}")
             st.write(f"**Email:** {request['email']}")
             st.write(f"**Operations:** {', '.join(request['operations'])}")
             st.write(f"**Intended use:** {request['intended_use']}")
@@ -236,9 +318,17 @@ def show_admin_page():
 
     st.subheader("All requests")
     if requests_list:
+        status_filter = st.selectbox(
+            "Show", ["All statuses", logic.STATUS_SUBMITTED, logic.STATUS_NEEDS_INFO,
+                     logic.STATUS_AVAILABLE],
+        )
+        shown = requests_list if status_filter == "All statuses" else \
+            logic.list_requests_by_status(requests_list, status_filter)
         st.dataframe(
-            [{"Request ID": r["request_id"], "Name": r["name"], "API": r["product_id"],
-              "Environment": r["environment"], "Status": r["status"]} for r in requests_list],
+            [{"Request ID": r["request_id"], "Name": r["name"],
+              "API": logic.get_product_name(r["product_id"], catalog),
+              "Environment": r["environment"], "Status": r["status"],
+              "Resubmissions": r.get("resubmission_count", 0)} for r in shown],
             hide_index=True, width="stretch",
         )
     else:
