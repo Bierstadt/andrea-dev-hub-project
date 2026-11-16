@@ -33,6 +33,9 @@ REQUIRED_FIELDS = (
     "intended_use", "reviewed_guide", "technical_contact",
 )
 
+# Fields a requester may change when answering a "Needs Information" note.
+RESUBMIT_FIELDS = ("intended_use", "reviewed_guide", "technical_contact")
+
 
 class DataFileError(Exception):
     """Raised when a data file is missing, unreadable, or not valid JSON."""
@@ -102,6 +105,20 @@ def find_product(product_id, catalog):
         if product["id"] == product_id:
             return product
     return None
+
+
+def get_product_name(product_id, catalog):
+    """Get a product's display name, falling back to its id if it is unknown.
+
+    Args:
+        product_id (str): Product id such as "quote".
+        catalog (list): List of product dicts.
+
+    Returns:
+        str: The product name, e.g. "Quote API".
+    """
+    product = find_product(product_id, catalog)
+    return product["name"] if product else product_id
 
 
 # AI-generated: builds one combined search string per product and
@@ -361,6 +378,54 @@ def request_more_info(request, requests_list, note):
         raise ValueError("Please write a note explaining what information is needed.")
     request["status"] = STATUS_NEEDS_INFO
     request["review_note"] = note
+    write_requests(requests_list)
+    return request
+
+
+def resubmit_request(request, requests_list, updates, response=""):
+    """Requester action: update a Needs Information request and send it back for review.
+
+    Only the fields in RESUBMIT_FIELDS can be changed. The reviewer's note is
+    kept as "previous_review_note" so the admin can see what was asked for.
+
+    Args:
+        request (dict): The request being resubmitted.
+        requests_list (list): All saved requests (saved after the change).
+        updates (dict): New values for any of the RESUBMIT_FIELDS.
+        response (str): Optional message from the requester to the reviewer.
+
+    Returns:
+        dict: The updated request, now back in the Submitted status.
+
+    Raises:
+        ValueError: If the request is not Needs Information or the updated
+            answers are not valid.
+    """
+    if request.get("status") != STATUS_NEEDS_INFO:
+        raise ValueError(f"Only {STATUS_NEEDS_INFO} requests can be resubmitted.")
+    updated = dict(request)
+    for field in RESUBMIT_FIELDS:
+        if field in updates:
+            updated[field] = str(updates[field]).strip()
+    for field in ("reviewed_guide", "technical_contact"):
+        updated[field] = updated[field].lower()
+    problems = validate_request(updated)
+    if problems:
+        raise ValueError("Please fix the following: " + "; ".join(problems))
+    response = (response or "").strip()
+    unchanged = all(updated[field] == request.get(field) for field in RESUBMIT_FIELDS)
+    if unchanged and not response:
+        raise ValueError("Please update an answer or add a message to the reviewer before resubmitting.")
+
+    for field in RESUBMIT_FIELDS:
+        request[field] = updated[field]
+    request["previous_review_note"] = request.pop("review_note", "")
+    if response:
+        request["requester_response"] = response
+    else:
+        request.pop("requester_response", None)
+    request["resubmission_count"] = request.get("resubmission_count", 0) + 1
+    request["status"] = STATUS_SUBMITTED
     write_requests(requests_list)
     return request
 
