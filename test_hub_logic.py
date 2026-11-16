@@ -114,6 +114,45 @@ class TestRequests(unittest.TestCase):
     def test_mask_credential(self):
         self.assertEqual(logic.mask_credential("sk_test_abc"), "sk_test****")
 
+    def send_back_for_info(self, **changes):
+        """Save a request and have the admin mark it Needs Information."""
+        saved = logic.save_request(make_valid_request(**changes), self.requests_list)
+        logic.request_more_info(saved, self.requests_list, logic.suggest_review_note(saved))
+        return saved
+
+    def test_resubmit_returns_request_to_submitted(self):
+        saved = self.send_back_for_info(reviewed_guide="no")
+        logic.resubmit_request(saved, self.requests_list, {"reviewed_guide": "YES"}, "Read it now")
+        self.assertEqual(saved["status"], logic.STATUS_SUBMITTED)
+        self.assertEqual(saved["reviewed_guide"], "yes")
+        self.assertIn("API guide", saved["previous_review_note"])
+        self.assertNotIn("review_note", saved)
+        self.assertEqual(saved["requester_response"], "Read it now")
+        self.assertEqual(saved["resubmission_count"], 1)
+
+    def test_resubmit_only_allowed_for_needs_information(self):
+        saved = logic.save_request(make_valid_request(), self.requests_list)
+        with self.assertRaises(ValueError):
+            logic.resubmit_request(saved, self.requests_list, {})
+
+    def test_resubmit_needs_a_change_or_message(self):
+        saved = self.send_back_for_info(reviewed_guide="no")
+        with self.assertRaises(ValueError):
+            logic.resubmit_request(saved, self.requests_list, {"reviewed_guide": "no"}, " ")
+        self.assertEqual(saved["status"], logic.STATUS_NEEDS_INFO)
+
+    def test_resubmit_rejects_invalid_answers_without_changing_request(self):
+        saved = self.send_back_for_info(technical_contact="no")
+        with self.assertRaises(ValueError):
+            logic.resubmit_request(saved, self.requests_list, {"intended_use": "  "})
+        self.assertEqual(saved["status"], logic.STATUS_NEEDS_INFO)
+        self.assertEqual(saved["intended_use"], "Testing quotes")
+
+    def test_get_product_name_falls_back_to_id(self):
+        catalog, _, _ = logic.load_hub_data()
+        self.assertNotEqual(logic.get_product_name("quote", catalog), "quote")
+        self.assertEqual(logic.get_product_name("nope", catalog), "nope")
+
 
 if __name__ == "__main__":
     unittest.main()
